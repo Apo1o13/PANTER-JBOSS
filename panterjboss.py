@@ -282,6 +282,7 @@ session_data = {
     'fecha_inicio':     datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     'hosts_escaneados': [],
     'vulnerabilidades': [],
+    'inconclusos':      [],
     'evidencias':       [],
     'hosts_comprometidos': [],
     'red_interna':      [],
@@ -384,6 +385,16 @@ def check_connectivity(host, port):
         return False
 
     return True
+
+
+def _vector_vulnerable(code):
+    """Verdicto unico de vulnerabilidad por vector.
+
+    Solo los codigos 200/500 reales cuentan como vulnerable. El codigo interno
+    100 es INCONCLUSO (requiere verificacion manual) y NO debe contarse como
+    vulnerable: antes se promovia a 200 y se reportaba como falso positivo.
+    """
+    return code in (200, 500)
 
 
 def check_vul(url):
@@ -723,7 +734,10 @@ def check_vul(url):
                     print_and_flush(RED + "  [ VULNERABLE ]" + ENDC)
                     logging.info("Servidor %s: VULNERABLE" % url)
             elif paths[vector] == 100:
-                paths[vector] = 200
+                # INCONCLUSO: se conserva el codigo 100 (NO se promueve a 200).
+                # Antes se reasignaba a 200 y el recolector lo contaba como
+                # VULNERABLE, convirtiendo un resultado no concluyente en un
+                # falso positivo.
                 print_and_flush(RED + "  [ INCONCLUSO - REQUIERE VERIFICACION MANUAL ]" + ENDC)
                 logging.info("Servidor %s: INCONCLUSO - REQUIERE VERIFICACION" % url)
             elif paths[vector] == 110:
@@ -1676,10 +1690,12 @@ def main():
         scan_results = check_vul(url)
         # recolectar vectores vulnerables
         for vector in scan_results:
-            if scan_results[vector] == 200 or scan_results[vector] == 500:
+            if _vector_vulnerable(scan_results[vector]):
                 vulnerables = True
                 vuln_vectors.append((url, vector))
                 session_data['vulnerabilidades'].append({'host': url, 'vector': vector, 'estado': 'VULNERABLE'})
+            elif scan_results[vector] == 100:
+                session_data['inconclusos'].append({'host': url, 'vector': vector, 'estado': 'INCONCLUSO'})
 
         # preguntar UNA SOLA VEZ si desea explotar
         if vulnerables and not gl_args.auto_exploit and not _solo_scan:
@@ -1718,7 +1734,7 @@ def main():
                     url = "{0}:{1}".format(ip,port)
                     ip_results = check_vul(url)
                     for key in ip_results.keys():
-                        if ip_results[key] == 200 or ip_results[key] == 500:
+                        if _vector_vulnerable(ip_results[key]):
                             vulnerables = True
                             vuln_count += 1
                             vuln_vectors.append((url, key))
@@ -1756,7 +1772,7 @@ def main():
             if check_connectivity(ip, port):
                 url_results = check_vul(url)
                 for key in url_results.keys():
-                    if url_results[key] == 200 or url_results[key] == 500:
+                    if _vector_vulnerable(url_results[key]):
                         vulnerables = True
                         vuln_count += 1
                         vuln_vectors.append((url, key))
